@@ -5,59 +5,83 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 // @ts-ignore - Deno global object
-// Las Edge Functions de Supabase tienen estas variables automáticamente disponibles
+const ACCESS_TOKEN = Deno.env.get("WHATSAPP_ACCESS_TOKEN") || "";
+// @ts-ignore - Deno global object
+const PHONE_ID = Deno.env.get("WHATSAPP_PHONE_NUMBER_ID") || "";
+// @ts-ignore - Deno global object
+const VERIFY_TOKEN = Deno.env.get("WHATSAPP_VERIFY_TOKEN") || "mi_token_secreto_123";
+// @ts-ignore - Deno global object
 const supabaseUrl = Deno.env.get("SUPABASE_URL") || Deno.env.get("PROJECT_URL") || "";
 // @ts-ignore - Deno global object
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SERVICE_ROLE_KEY") || "";
 
 serve(async (req: Request) => {
-  const url = new URL(req.url);
+  const method = req.method;
 
-  // --- VERIFICACIÓN DE WEBHOOK DE META (OBLIGATORIO) ---
-  const mode = url.searchParams.get("hub.mode");
-  const token = url.searchParams.get("hub.verify_token");
-  const challenge = url.searchParams.get("hub.challenge");
+  // -----------------------------------------------
+  // VERIFY WEBHOOK (OFFICIAL META FORMAT)
+  // -----------------------------------------------
+  if (method === "GET") {
+    const url = new URL(req.url);
 
-  if (mode === "subscribe" && token === "mi_token_secreto_123") {
-    console.log("✅ Webhook verificado correctamente");
-    return new Response(challenge, {
-      status: 200,
-      headers: { "Content-Type": "text/plain" }
-    });
+    const mode = url.searchParams.get("hub.mode");
+    const token = url.searchParams.get("hub.verify_token");
+    const challenge = url.searchParams.get("hub.challenge");
+
+    if (mode === "subscribe" && token === VERIFY_TOKEN) {
+      console.log("✅ Webhook verificado correctamente");
+      return new Response(challenge, {
+        status: 200,
+        headers: { "Content-Type": "text/plain" }
+      });
+    }
+
+    return new Response("Forbidden", { status: 403 });
   }
 
-  // --- SI ES POST (MENSAJE DESDE WHATSAPP) ---
-  if (req.method === "POST") {
+  // -----------------------------------------------
+  // HANDLE MESSAGES (OFFICIAL META FORMAT)
+  // -----------------------------------------------
+  if (method === "POST") {
     try {
       const body = await req.json();
-      console.log("📩 Nuevo mensaje recibido:", body);
 
-      // Inicializar Supabase client si tenemos las credenciales
+      const entry = body.entry?.[0];
+      const changes = entry?.changes?.[0];
+      const value = changes?.value;
+      const msg = value?.messages?.[0];
+      const contact = value?.contacts?.[0];
+
+      if (!msg) {
+        console.log("⚠️ No message in webhook payload");
+        return new Response("OK", { status: 200 });
+      }
+
+      // Solo procesar mensajes de texto por ahora
+      if (msg.type !== "text") {
+        console.log(`⚠️ Message type not supported: ${msg.type}`);
+        return new Response("OK", { status: 200 });
+      }
+
+      const from = msg.from;
+      const text = msg.text?.body || "";
+      const wa_id = contact?.wa_id || from;
+      const name = contact?.profile?.name || "";
+
+      console.log(`📱 Mensaje de ${from}: ${text}`);
+
+      // Guardar en Supabase
+      let customerId: string | null = null;
+      
       if (supabaseUrl && supabaseServiceKey) {
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-        // Procesar mensaje entrante
-        const entry = body.entry?.[0];
-        const changes = entry?.changes?.[0];
-        const value = changes?.value;
-        const message = value?.messages?.[0];
-        const contact = value?.contacts?.[0];
-
-        if (message && message.type === "text") {
-          const phone = message.from;
-          const text = message.text?.body || "";
-          const wa_id = contact?.wa_id || phone;
-          const name = contact?.profile?.name || "";
-
-          console.log(`📱 Mensaje de ${phone}: ${text}`);
+        try {
+          const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
           // 1. Obtener o crear cliente
-          let customerId: string | null = null;
-          
           const { data: existingCustomer } = await supabase
             .from("customers")
             .select("id")
-            .eq("phone", phone)
+            .eq("phone", from)
             .single();
 
           if (existingCustomer) {
@@ -68,7 +92,7 @@ serve(async (req: Request) => {
             const { data: newCustomer, error: customerError } = await supabase
               .from("customers")
               .insert({
-                phone: phone,
+                phone: from,
                 name: name || null,
                 wa_id: wa_id,
                 plan: "basic",
@@ -90,13 +114,13 @@ serve(async (req: Request) => {
               .from("messages")
               .insert({
                 customer_id: customerId,
-                phone: phone,
+                phone: from,
                 direction: "inbound",
                 message_type: "text",
                 content: text,
                 ton_data: {
                   text: text.toLowerCase().trim(),
-                  from: phone,
+                  from: from,
                   wa_id: wa_id,
                 },
               });
@@ -107,15 +131,84 @@ serve(async (req: Request) => {
               console.log("✅ Mensaje guardado en base de datos");
             }
           }
+        } catch (error) {
+          console.error("❌ Error con Supabase:", error);
+          // Continuar aunque falle Supabase
         }
       }
 
-      return new Response("EVENT_RECEIVED", { status: 200 });
+      // -----------------------------------------------
+      // RESPUESTAS AUTOMÁTICAS (BÁSICAS)
+      // -----------------------------------------------
+      const textLower = text.toLowerCase().trim();
+      let reply = "Hola! 👋 Gracias por contactarnos. ¿En qué puedo ayudarte?";
+
+      // Respuestas básicas (se puede mejorar con IA después)
+      if (textLower.includes("hola") || textLower.includes("hi") || textLower.includes("buenas")) {
+        reply = "¡Hola! 👋 Bienvenido. ¿Qué estás buscando?";
+      } else if (textLower.includes("precio") || textLower.includes("precios") || textLower.includes("costo")) {
+        reply = "Nuestros precios están disponibles. ¿Qué producto te interesa?";
+      } else if (textLower.includes("comprar") || textLower.includes("quiero") || textLower.includes("necesito")) {
+        reply = "Perfecto! ¿Qué producto te gustaría comprar?";
+      } else if (textLower.includes("producto") || textLower.includes("productos") || textLower.includes("catálogo")) {
+        reply = "Tenemos varios productos disponibles. ¿Qué tipo de producto buscas?";
+      }
+
+      // Enviar respuesta automática
+      if (ACCESS_TOKEN && PHONE_ID) {
+        try {
+          await sendMessage(from, reply);
+          console.log(`✅ Respuesta enviada a ${from}`);
+        } catch (error) {
+          console.error("❌ Error enviando respuesta:", error);
+        }
+      }
+
+      return new Response("OK", { status: 200 });
     } catch (error) {
       console.error("❌ Error procesando webhook:", error);
-      return new Response("EVENT_RECEIVED", { status: 200 }); // Meta espera 200
+      return new Response("OK", { status: 200 }); // Meta espera 200 incluso si hay error
     }
   }
 
-  return new Response("OK", { status: 200 });
+  return new Response("Not allowed", { status: 405 });
 });
+
+// -----------------------------------------------
+// FUNCIÓN PARA ENVIAR MENSAJES
+// -----------------------------------------------
+async function sendMessage(to: string, text: string) {
+  if (!ACCESS_TOKEN || !PHONE_ID) {
+    throw new Error("WhatsApp credentials not configured");
+  }
+
+  const url = `https://graph.facebook.com/v21.0/${PHONE_ID}/messages`;
+
+  const payload = {
+    messaging_product: "whatsapp",
+    recipient_type: "individual",
+    to,
+    type: "text",
+    text: {
+      preview_url: false,
+      body: text,
+    },
+  };
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${ACCESS_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`WhatsApp API error: ${response.status} - ${error}`);
+  }
+
+  const result = await response.json();
+  return result;
+}

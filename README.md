@@ -5,6 +5,7 @@ Sistema completo de automatización de ventas por WhatsApp usando n8n, WhatsApp 
 ## 📋 Tabla de Contenidos
 
 - [Características](#-características)
+- [Cómo Funciona el Sistema (End-to-End)](#-cómo-funciona-el-sistema-end-to-end)
 - [Arquitectura](#-arquitectura)
 - [Planes](#-planes)
 - [Tecnologías](#-tecnologías)
@@ -25,22 +26,375 @@ Sistema completo de automatización de ventas por WhatsApp usando n8n, WhatsApp 
 - 🔄 **Workflows n8n**: Automatización visual sin código
 - 📱 **Mensajes Salientes**: Campañas automáticas (plan Full)
 - 🎯 **TON Notation**: Formato eficiente para reducir tokens
+- 🔧 **Webhook Profesional**: Edge Function de Supabase para recepción de mensajes
+
+## 🔄 Cómo Funciona el Sistema (End-to-End)
+
+### Visión General del Flujo Completo
+
+El sistema funciona como un SaaS completo que automatiza completamente la comunicación por WhatsApp, desde la recepción de mensajes hasta la respuesta inteligente y el almacenamiento de datos.
+
+```
+┌─────────────┐
+│   Cliente   │
+│  WhatsApp   │
+└──────┬──────┘
+       │
+       │ 1. Envía mensaje
+       │    "Hola, quiero ver productos"
+       ↓
+┌─────────────────────────────────────┐
+│   WhatsApp Cloud API (Meta)         │
+│   - Recibe mensaje del cliente     │
+│   - Valida número y permisos       │
+└──────┬──────────────────────────────┘
+       │
+       │ 2. Webhook POST
+       │    (con payload del mensaje)
+       ↓
+┌─────────────────────────────────────┐
+│   Supabase Edge Function            │
+│   (whatsapp-webhook)                │
+│   - Verifica webhook (GET)          │
+│   - Recibe mensajes (POST)          │
+│   - Guarda en Supabase              │
+│   - Responde automáticamente        │
+└──────┬──────────────────────────────┘
+       │
+       │ 3. Guarda datos
+       ↓
+┌─────────────────────────────────────┐
+│   Supabase Database                 │
+│   - customers (crea/actualiza)       │
+│   - messages (guarda mensaje)       │
+│   - carts (si aplica)               │
+└─────────────────────────────────────┘
+       │
+       │ 4. (Opcional) Integración n8n
+       │    Para procesamiento avanzado
+       ↓
+┌─────────────────────────────────────┐
+│   n8n Workflow (Opcional)           │
+│   - Normaliza a TON                 │
+│   - Consulta OpenAI                  │
+│   - Procesa intención               │
+│   - Consulta Supabase               │
+│   - Genera respuesta inteligente    │
+└──────┬──────────────────────────────┘
+       │
+       │ 5. Envía respuesta
+       ↓
+┌─────────────────────────────────────┐
+│   WhatsApp Cloud API                │
+│   - Envía mensaje al cliente        │
+└──────┬──────────────────────────────┘
+       │
+       │ 6. Cliente recibe respuesta
+       ↓
+┌─────────────┐
+│   Cliente   │
+│  WhatsApp   │
+└─────────────┘
+```
+
+### Flujo Detallado Paso a Paso
+
+#### **Paso 1: Cliente Envía Mensaje**
+
+El cliente envía un mensaje desde su WhatsApp al número de negocio (ej: `+1 555 165 1361`).
+
+**Ejemplo:**
+```
+Cliente: "Hola, quiero ver productos"
+```
+
+#### **Paso 2: WhatsApp Cloud API Recibe el Mensaje**
+
+Meta (WhatsApp Cloud API) recibe el mensaje y lo procesa:
+- Valida que el número esté autorizado
+- Verifica permisos del negocio
+- Prepara el webhook para enviar a tu servidor
+
+**Payload del Webhook:**
+```json
+{
+  "entry": [{
+    "changes": [{
+      "value": {
+        "messages": [{
+          "from": "5491165820938",
+          "id": "wamid.xxx",
+          "timestamp": "1234567890",
+          "text": {
+            "body": "Hola, quiero ver productos"
+          },
+          "type": "text"
+        }],
+        "contacts": [{
+          "profile": {
+            "name": "Juan Pérez"
+          },
+          "wa_id": "5491165820938"
+        }]
+      }
+    }]
+  }]
+}
+```
+
+#### **Paso 3: Supabase Edge Function Procesa el Webhook**
+
+La Edge Function `whatsapp-webhook` en Supabase recibe el webhook:
+
+**3.1. Verificación (GET) - Solo la primera vez:**
+```
+Meta → GET /functions/v1/whatsapp-webhook?hub.mode=subscribe&hub.verify_token=xxx&hub.challenge=123
+Edge Function → Responde con el challenge (123)
+Meta → ✅ Webhook verificado
+```
+
+**3.2. Recepción de Mensaje (POST):**
+```typescript
+// supabase/functions/whatsapp-webhook/index.ts
+
+1. Recibe el payload del webhook
+2. Extrae información:
+   - from: "5491165820938"
+   - text: "Hola, quiero ver productos"
+   - name: "Juan Pérez"
+   - wa_id: "5491165820938"
+
+3. Conecta a Supabase:
+   - Busca cliente por teléfono
+   - Si no existe, crea nuevo cliente (plan: "basic")
+   - Guarda mensaje en tabla `messages`
+
+4. Genera respuesta automática:
+   - Analiza el texto
+   - Responde según palabras clave:
+     * "hola" → "¡Hola! 👋 Bienvenido..."
+     * "precio" → "Nuestros precios..."
+     * "comprar" → "Perfecto! ¿Qué producto..."
+     * "producto" → "Tenemos varios productos..."
+
+5. Envía respuesta usando WhatsApp Cloud API:
+   - POST https://graph.facebook.com/v21.0/{PHONE_ID}/messages
+   - Con Access Token y payload del mensaje
+```
+
+#### **Paso 4: Almacenamiento en Supabase**
+
+Los datos se guardan automáticamente:
+
+**Tabla `customers`:**
+```sql
+INSERT INTO customers (phone, name, wa_id, plan)
+VALUES ('5491165820938', 'Juan Pérez', '5491165820938', 'basic')
+ON CONFLICT (phone) DO UPDATE SET name = EXCLUDED.name;
+```
+
+**Tabla `messages`:**
+```sql
+INSERT INTO messages (customer_id, phone, direction, message_type, content, ton_data)
+VALUES (
+  'uuid-del-cliente',
+  '5491165820938',
+  'inbound',
+  'text',
+  'Hola, quiero ver productos',
+  '{"text": "hola quiero ver productos", "from": "5491165820938", "wa_id": "5491165820938"}'
+);
+```
+
+#### **Paso 5: (Opcional) Procesamiento Avanzado con n8n**
+
+Si tienes n8n configurado, puedes agregar procesamiento avanzado:
+
+**5.1. Webhook de n8n recibe notificación:**
+- n8n puede escuchar eventos de Supabase (Database Webhooks)
+- O puede ser llamado directamente desde la Edge Function
+
+**5.2. Normalización a TON:**
+```typescript
+// Convierte mensaje a formato TON
+text:"hola quiero ver productos"
+from:"5491165820938"
+wa_id:"5491165820938"
+```
+
+**5.3. Consulta a OpenAI:**
+```typescript
+// Envía TON a OpenAI con prompt del plan
+const response = await openai.chat.completions.create({
+  model: "gpt-4o-mini",
+  messages: [
+    { role: "system", content: promptPro }, // Prompt del plan Pro
+    { role: "user", content: tonInput }
+  ]
+});
+
+// Respuesta TON:
+intent:"pregunta_producto"
+product_query:"productos"
+response:"Tenemos varios productos disponibles..."
+```
+
+**5.4. Procesamiento según Intención:**
+- `saludo` → Respuesta de bienvenida
+- `pregunta_producto` → Consulta productos en Supabase
+- `agregar_carrito` → Agrega producto al carrito
+- `consultar_carrito` → Muestra carrito del cliente
+- `confirmar_pedido` → Crea pedido desde carrito
+
+**5.5. Consulta a Supabase (si necesario):**
+```sql
+-- Ejemplo: Buscar productos
+SELECT * FROM products 
+WHERE name ILIKE '%producto%' 
+LIMIT 5;
+
+-- Ejemplo: Agregar al carrito
+SELECT add_to_cart(
+  p_customer_id := 'uuid',
+  p_product_id := 'uuid',
+  p_quantity := 1
+);
+```
+
+**5.6. Genera Respuesta Final:**
+- Combina datos de Supabase con respuesta de IA
+- Formatea mensaje para WhatsApp
+- Envía respuesta al cliente
+
+#### **Paso 6: Cliente Recibe Respuesta**
+
+El cliente recibe la respuesta en su WhatsApp:
+
+```
+Sistema: "¡Hola! 👋 Bienvenido. ¿Qué estás buscando?"
+```
+
+### Flujo de Mensajes Salientes (Solo Plan Full)
+
+Para mensajes salientes (campañas, carritos abandonados, ofertas):
+
+```
+┌─────────────────────┐
+│  Cron Job (n8n)     │
+│  - Diario: Carritos │
+│  - Semanal: Ofertas │
+└──────────┬──────────┘
+           │
+           │ 1. Consulta Supabase
+           ↓
+┌─────────────────────┐
+│  Supabase Query     │
+│  - Carritos         │
+│  - Clientes Full    │
+└──────────┬──────────┘
+           │
+           │ 2. Genera mensaje (OpenAI)
+           ↓
+┌─────────────────────┐
+│  OpenAI             │
+│  - Personaliza      │
+│  - Genera texto     │
+└──────────┬──────────┘
+           │
+           │ 3. Envía por WhatsApp
+           ↓
+┌─────────────────────┐
+│  WhatsApp Template  │
+│  - Mensaje masivo   │
+└──────────┬──────────┘
+           │
+           │ 4. Cliente recibe
+           ↓
+┌─────────────────────┐
+│  Cliente WhatsApp   │
+└─────────────────────┘
+```
+
+### Ejemplo Completo: Cliente Agrega Producto al Carrito
+
+**1. Cliente envía:**
+```
+"Quiero agregar iPhone al carrito"
+```
+
+**2. Webhook llega a Edge Function:**
+- Guarda mensaje en Supabase
+- Detecta palabra "comprar" o "agregar"
+- Responde automáticamente: "Perfecto! ¿Qué producto..."
+
+**3. (Si n8n está activo) n8n procesa:**
+- Normaliza a TON: `text:"quiero agregar iphone al carrito"`
+- OpenAI interpreta: `intent:"agregar_carrito"`, `product_query:"iphone"`
+- Busca producto en Supabase: `SELECT * FROM products WHERE name ILIKE '%iphone%'`
+- Agrega al carrito: `SELECT add_to_cart(...)`
+- Genera respuesta: "✅ iPhone 15 Pro agregado a tu carrito..."
+
+**4. Cliente recibe:**
+```
+"✅ iPhone 15 Pro agregado a tu carrito. 
+¿Quieres ver tu carrito o agregar algo más?"
+```
+
+### Componentes Clave del Sistema
+
+#### **1. Supabase Edge Function (whatsapp-webhook)**
+- **Ubicación**: `supabase/functions/whatsapp-webhook/index.ts`
+- **Responsabilidades**:
+  - Verificar webhook de Meta (GET)
+  - Recibir mensajes entrantes (POST)
+  - Guardar clientes y mensajes en Supabase
+  - Responder automáticamente (básico)
+  - Preparar datos para n8n (opcional)
+
+#### **2. Supabase Database**
+- **Tablas principales**:
+  - `customers`: Información de clientes
+  - `messages`: Historial de mensajes
+  - `products`: Catálogo de productos
+  - `carts`: Carritos de compra
+  - `orders`: Pedidos confirmados
+  - `campaigns`: Campañas de marketing
+
+#### **3. n8n Workflows (Opcional pero Recomendado)**
+- **Ubicación**: `workflows/basic.json`, `pro.json`, `full.json`
+- **Funcionalidades**:
+  - Normalización a TON
+  - Integración con OpenAI
+  - Lógica de negocio avanzada
+  - Cron jobs para mensajes salientes
+
+#### **4. WhatsApp Cloud API**
+- **Endpoints usados**:
+  - `POST /v21.0/{PHONE_ID}/messages`: Enviar mensajes
+  - Webhook: Recibir mensajes entrantes
+
+#### **5. OpenAI API**
+- **Uso**: Interpretación de intenciones y generación de respuestas
+- **Modelo**: GPT-4o-mini (eficiente y económico)
+- **Formato**: TON (Tree Object Notation) para reducir tokens
 
 ## 🏗️ Arquitectura
 
 ```
-WhatsApp Cloud API → n8n → OpenAI → Supabase
-         ↑                              ↓
+WhatsApp Cloud API → Supabase Edge Function → Supabase DB
+         ↑                    ↓
+         │              (Opcional) n8n → OpenAI
          └────────── Respuesta ─────────┘
 ```
 
 ### Componentes Principales
 
 1. **WhatsApp Cloud API**: Recepción y envío de mensajes
-2. **n8n**: Motor de workflows y automatización
-3. **OpenAI**: Interpretación de intenciones y generación de respuestas
-4. **Supabase**: Base de datos y API REST
-5. **TON**: Formato de normalización para comunicación eficiente
+2. **Supabase Edge Function**: Webhook profesional para recibir mensajes
+3. **Supabase Database**: Almacenamiento de datos
+4. **n8n**: Motor de workflows y automatización (opcional)
+5. **OpenAI**: Interpretación de intenciones y generación de respuestas
+6. **TON**: Formato de normalización para comunicación eficiente
 
 Ver [docs/architecture.md](docs/architecture.md) para más detalles.
 
@@ -50,14 +404,14 @@ Ver [docs/architecture.md](docs/architecture.md) para más detalles.
 - Respuestas automáticas a saludos
 - Consultas de productos
 - Respuestas genéricas
-- **Sin base de datos**
+- Guardado básico en Supabase
 
 ### 🟡 Plan Pro
 - ✅ Todo lo del plan Básico
 - ✅ Gestión de carrito
 - ✅ Consultar carrito
 - ✅ Confirmar pedidos
-- ✅ Integración con Supabase
+- ✅ Integración completa con Supabase
 
 ### 🔴 Plan Full
 - ✅ Todo lo del plan Pro
@@ -69,8 +423,9 @@ Ver [docs/architecture.md](docs/architecture.md) para más detalles.
 
 ## 🛠️ Tecnologías
 
-- **n8n**: Automatización y workflows
+- **Supabase Edge Functions**: Webhook profesional (Deno)
 - **WhatsApp Cloud API**: Comunicación por WhatsApp
+- **n8n**: Automatización y workflows (opcional)
 - **OpenAI (GPT-4o-mini)**: Inteligencia artificial
 - **Supabase**: Base de datos PostgreSQL + API REST
 - **TypeScript/Node.js**: Servicios y utilidades
@@ -84,11 +439,18 @@ Ver [docs/architecture.md](docs/architecture.md) para más detalles.
 # 1. Configurar variables de entorno
 ./scripts/setup-env.sh
 
-# 2. Levantar todo (elige opción)
-./scripts/start.sh
+# 2. Configurar Supabase
+# Ejecutar schema.sql y functions.sql en Supabase SQL Editor
 
-# 3. O seguir guía detallada
-# Lee SETUP.md para instrucciones completas
+# 3. Deployar Edge Function
+supabase functions deploy whatsapp-webhook --no-verify-jwt
+
+# 4. Configurar secrets
+supabase secrets set WHATSAPP_ACCESS_TOKEN=xxx WHATSAPP_PHONE_NUMBER_ID=xxx WHATSAPP_VERIFY_TOKEN=xxx
+
+# 5. Configurar webhook en Meta Business
+# URL: https://{PROJECT_ID}.supabase.co/functions/v1/whatsapp-webhook
+# Verify Token: (el configurado en secrets)
 ```
 
 ### Guías Disponibles
@@ -96,6 +458,7 @@ Ver [docs/architecture.md](docs/architecture.md) para más detalles.
 - **[SETUP.md](SETUP.md)** - Guía completa para levantar el proyecto
 - **[QUICK_START.md](QUICK_START.md)** - Inicio rápido (5 pasos)
 - **[TESTING.md](TESTING.md)** - Guía de pruebas detallada
+- **[WHATSAPP_SETUP.md](WHATSAPP_SETUP.md)** - Configuración de WhatsApp
 
 ## 🚀 Instalación
 
@@ -104,8 +467,8 @@ Ver [docs/architecture.md](docs/architecture.md) para más detalles.
 - Node.js 20+ (requerido por Supabase, ver [NODE_VERSION.md](NODE_VERSION.md))
 - Cuenta de Meta Business (WhatsApp Cloud API)
 - Cuenta de Supabase
-- Cuenta de OpenAI
-- Instancia de n8n (cloud o self-hosted)
+- Cuenta de OpenAI (opcional, para IA avanzada)
+- Instancia de n8n (opcional, para workflows avanzados)
 
 ### 1. Clonar Repositorio
 
@@ -117,16 +480,39 @@ cd whatsapp-sales-automation
 ### 2. Configurar Supabase
 
 ```bash
-# Ejecutar schema
-psql -h {SUPABASE_HOST} -U postgres -d postgres -f supabase/schema.sql
+# Ejecutar schema en Supabase SQL Editor
+# Archivo: supabase/schema.sql
 
-# Ejecutar seeds (opcional)
-psql -h {SUPABASE_HOST} -U postgres -d postgres -f supabase/seed.sql
+# Ejecutar functions (opcional, para funcionalidades avanzadas)
+# Archivo: supabase/functions.sql
+
+# O usar el SQL Editor en el dashboard de Supabase
 ```
 
-O usar el SQL Editor en el dashboard de Supabase.
+### 3. Deployar Edge Function
 
-### 3. Configurar n8n
+```bash
+# Deployar webhook
+supabase functions deploy whatsapp-webhook --no-verify-jwt
+
+# Configurar secrets
+supabase secrets set \
+  WHATSAPP_ACCESS_TOKEN=tu_token \
+  WHATSAPP_PHONE_NUMBER_ID=tu_phone_id \
+  WHATSAPP_VERIFY_TOKEN=tu_verify_token
+```
+
+### 4. Configurar WhatsApp Cloud API
+
+1. Crear app en [Meta for Developers](https://developers.facebook.com/)
+2. Configurar WhatsApp Business API
+3. Obtener Phone Number ID y Access Token
+4. Configurar webhook en Meta Business:
+   - URL: `https://{PROJECT_ID}.supabase.co/functions/v1/whatsapp-webhook`
+   - Verify Token: (el configurado en secrets)
+   - Suscribirse a eventos: `messages`
+
+### 5. (Opcional) Configurar n8n
 
 1. Importar workflows:
    - `workflows/basic.json`
@@ -142,29 +528,6 @@ O usar el SQL Editor en el dashboard de Supabase.
    OPENAI_API_KEY=sk-xxx
    ```
 
-3. Configurar credenciales:
-   - **OpenAI API**: API Key
-   - **WhatsApp Cloud API**: HTTP Header Auth (Bearer token)
-   - **Supabase**: HTTP Header Auth (apikey header)
-
-### 4. Configurar WhatsApp Cloud API
-
-1. Crear app en [Meta for Developers](https://developers.facebook.com/)
-2. Configurar WhatsApp Business API
-3. Obtener Phone Number ID y Access Token
-4. Configurar webhook en n8n:
-   - URL: `https://{n8n-instance}/webhook/{webhook-id}`
-   - Verify Token: (configurar en n8n)
-   - Suscribirse a eventos: `messages`
-
-### 5. Instalar Dependencias (Opcional)
-
-Si usas los servicios TypeScript:
-
-```bash
-npm install
-```
-
 ## ⚙️ Configuración
 
 ### Variables de Entorno
@@ -176,13 +539,14 @@ Crear archivo `.env`:
 WHATSAPP_PHONE_NUMBER_ID=123456789
 WHATSAPP_ACCESS_TOKEN=xxx
 WHATSAPP_VERIFY_TOKEN=xxx
+WHATSAPP_BUSINESS_ACCOUNT_ID=xxx
 
 # Supabase
 SUPABASE_URL=https://xxx.supabase.co
 SUPABASE_ANON_KEY=xxx
 SUPABASE_SERVICE_ROLE_KEY=xxx
 
-# OpenAI
+# OpenAI (opcional)
 OPENAI_API_KEY=sk-xxx
 
 # n8n (si self-hosted)
@@ -192,11 +556,15 @@ N8N_BASIC_AUTH_PASSWORD=xxx
 
 ### Configurar Webhooks
 
-1. Obtener URL del webhook de n8n
+1. Obtener URL del webhook de Supabase:
+   ```
+   https://{PROJECT_ID}.supabase.co/functions/v1/whatsapp-webhook
+   ```
+
 2. Configurar en Meta Business Manager:
    - Settings → WhatsApp → Configuration
-   - Webhook URL: `https://{n8n}/webhook/{id}`
-   - Verify Token: (el configurado en n8n)
+   - Webhook URL: (la URL de arriba)
+   - Verify Token: (el configurado en secrets)
 
 ### Configurar Templates (Solo Plan Full)
 
@@ -206,38 +574,36 @@ N8N_BASIC_AUTH_PASSWORD=xxx
 
 ## 📖 Uso
 
-### Activar Workflow
+### Activar Sistema
 
-1. Abrir n8n
-2. Seleccionar workflow según plan
-3. Activar workflow
-4. Probar enviando mensaje por WhatsApp
+1. **Edge Function ya está activa** (se deploya automáticamente)
+2. **Verificar webhook en Meta Business** (debe estar verificado)
+3. **(Opcional) Activar workflows en n8n**
 
 ### Flujo Básico
 
 1. Cliente envía mensaje por WhatsApp
-2. Webhook recibe en n8n
-3. Mensaje se normaliza a TON
-4. OpenAI interpreta intención
-5. Se consulta Supabase (si necesario)
-6. Se genera respuesta
-7. Se envía por WhatsApp
+2. Webhook recibe en Supabase Edge Function
+3. Mensaje se guarda en Supabase
+4. Cliente se crea/actualiza automáticamente
+5. Respuesta automática se envía (básica)
+6. (Opcional) n8n procesa para respuesta avanzada con IA
 
 ### Ejemplos de Mensajes
 
 **Saludo:**
 ```
 Cliente: "Hola"
-Sistema: "¡Hola! 👋 Bienvenido a nuestra tienda..."
+Sistema: "¡Hola! 👋 Bienvenido. ¿Qué estás buscando?"
 ```
 
-**Agregar al Carrito:**
+**Agregar al Carrito (con n8n):**
 ```
 Cliente: "Quiero agregar iPhone al carrito"
 Sistema: "✅ iPhone 15 Pro agregado a tu carrito..."
 ```
 
-**Consultar Carrito:**
+**Consultar Carrito (con n8n):**
 ```
 Cliente: "Ver mi carrito"
 Sistema: "🛒 Tu carrito: ..."
@@ -247,14 +613,18 @@ Sistema: "🛒 Tu carrito: ..."
 
 ```
 whatsapp-sales-automation/
-├── workflows/              # Workflows n8n
+├── supabase/
+│   ├── functions/
+│   │   └── whatsapp-webhook/
+│   │       └── index.ts          # Edge Function principal
+│   ├── schema.sql                 # Esquema de base de datos
+│   ├── seed.sql                   # Datos de ejemplo
+│   └── functions.sql              # Funciones RPC
+├── workflows/                     # Workflows n8n (opcional)
 │   ├── basic.json
 │   ├── pro.json
 │   └── full.json
-├── supabase/              # Base de datos
-│   ├── schema.sql
-│   └── seed.sql
-├── src/                   # Código TypeScript
+├── src/                           # Código TypeScript (opcional)
 │   ├── utils/
 │   │   ├── ton.ts
 │   │   ├── whatsapp.ts
@@ -264,17 +634,22 @@ whatsapp-sales-automation/
 │       ├── whatsapp.service.ts
 │       ├── cart.service.ts
 │       └── orders.service.ts
-├── prompts/               # Prompts para IA
+├── prompts/                       # Prompts para IA
 │   ├── ia_basic.ton.txt
 │   ├── ia_pro.ton.txt
 │   └── ia_full.ton.txt
-├── docs/                  # Documentación
+├── docs/                          # Documentación
 │   ├── architecture.md
 │   ├── flow_basic.md
 │   ├── flow_pro.md
 │   ├── flow_full.md
 │   └── endpoints.md
-├── dashboard/             # Dashboard Next.js (opcional)
+├── scripts/                       # Scripts de utilidad
+│   ├── setup-env.sh
+│   ├── test-webhook.sh
+│   ├── quick-test-whatsapp.sh
+│   └── deploy-whatsapp-webhook.sh
+├── dashboard/                     # Dashboard Next.js (opcional)
 └── README.md
 ```
 
@@ -285,66 +660,59 @@ whatsapp-sales-automation/
 - [Flujo Pro](docs/flow_pro.md): Plan Pro detallado
 - [Flujo Full](docs/flow_full.md): Plan Full detallado
 - [Endpoints](docs/endpoints.md): Documentación de APIs
-
-## 🔧 Desarrollo
-
-### Servicios TypeScript
-
-Los servicios en `src/` son opcionales y pueden usarse como referencia o para extender funcionalidades.
-
-```typescript
-import { AIService } from './services/ai.service';
-import { WhatsAppService } from './services/whatsapp.service';
-import { CartService } from './services/cart.service';
-
-// Ejemplo de uso
-const aiService = new AIService({ apiKey: process.env.OPENAI_API_KEY });
-const result = await aiService.interpretIntent(tonInput, prompt, 'pro');
-```
-
-### Agregar Nuevas Intenciones
-
-1. Actualizar prompt en `prompts/`
-2. Agregar caso en switch de n8n
-3. Implementar lógica en workflow
-4. Actualizar documentación
+- [WhatsApp Setup](WHATSAPP_SETUP.md): Guía de configuración de WhatsApp
 
 ## 🧪 Testing
 
-### Probar Webhook Localmente
-
-Usar [ngrok](https://ngrok.com/) para exponer n8n local:
+### Probar Webhook
 
 ```bash
-ngrok http 5678
-# Usar URL de ngrok en Meta Business Manager
+# Probar verificación
+./scripts/test-webhook.sh
+
+# Probar envío de mensaje
+./scripts/quick-test-whatsapp.sh TU_NUMERO
+
+# Probar recepción
+# Envía un mensaje desde tu WhatsApp al número de prueba
 ```
 
-### Probar con Número de Prueba
+### Verificar en Supabase
 
-1. Agregar número de prueba en Meta Business Manager
-2. Enviar mensajes de prueba
-3. Verificar logs en n8n
+```sql
+-- Ver mensajes recibidos
+SELECT * FROM messages ORDER BY created_at DESC LIMIT 10;
+
+-- Ver clientes creados
+SELECT * FROM customers ORDER BY created_at DESC LIMIT 10;
+```
 
 ## 🚨 Troubleshooting
 
 ### Webhook no recibe mensajes
 
 - Verificar URL en Meta Business Manager
-- Verificar Verify Token
-- Revisar logs de n8n
+- Verificar Verify Token en secrets
+- Revisar logs de Supabase Edge Functions
+- Verificar que el webhook esté verificado en Meta
 
-### OpenAI no responde
+### Mensajes no se guardan en Supabase
+
+- Verificar SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY en secrets
+- Revisar logs de Edge Function
+- Verificar que las tablas existan (ejecutar schema.sql)
+
+### Respuestas automáticas no funcionan
+
+- Verificar WHATSAPP_ACCESS_TOKEN y WHATSAPP_PHONE_NUMBER_ID en secrets
+- Revisar logs de Edge Function
+- Verificar que el token no haya expirado
+
+### OpenAI no responde (si usas n8n)
 
 - Verificar API Key
 - Revisar límites de rate
 - Verificar formato TON
-
-### Supabase no conecta
-
-- Verificar URL y API Key
-- Revisar políticas RLS (Row Level Security)
-- Verificar funciones RPC creadas
 
 ## 📝 Licencia
 
@@ -368,6 +736,9 @@ Las contribuciones son bienvenidas. Por favor:
 
 ## 🎯 Roadmap
 
+- [x] Webhook profesional con Supabase Edge Functions
+- [x] Respuestas automáticas básicas
+- [x] Integración completa con Supabase
 - [ ] Dashboard web para gestión
 - [ ] Analytics y métricas
 - [ ] Integración con pasarelas de pago
@@ -376,10 +747,10 @@ Las contribuciones son bienvenidas. Por favor:
 
 ## 🙏 Agradecimientos
 
-- n8n por la plataforma de automatización
+- Supabase por la infraestructura de Edge Functions
 - Meta por WhatsApp Cloud API
+- n8n por la plataforma de automatización
 - OpenAI por la API de IA
-- Supabase por la infraestructura de backend
 
 ---
 
