@@ -1,103 +1,24 @@
 {
-  "name": "WhatsApp Sales Automation - Plan Básico",
+  "name": "WhatsApp Sales Automation - Limpio y Corregido",
   "nodes": [
     {
       "parameters": {
-        "httpMethod": "POST",
-        "path": "webhook",
-        "responseMode": "responseNode",
-        "options": {}
+        "updates": [
+          "messages"
+        ]
       },
-      "id": "webhook-incoming",
-      "name": "Webhook WhatsApp",
-      "type": "n8n-nodes-base.webhook",
+      "id": "whatsapp-trigger",
+      "name": "WhatsApp Trigger",
+      "type": "n8n-nodes-base.whatsAppTrigger",
       "typeVersion": 1,
-      "position": [250, 300],
-      "webhookId": "whatsapp-incoming"
-    },
-    {
-      "parameters": {
-        "assignments": {
-          "assignments": [
-            {
-              "id": "ton_text",
-              "name": "ton_text",
-              "value": "={{ $json.body.entry[0].changes[0].value.messages[0].text.body }}",
-              "type": "string"
-            },
-            {
-              "id": "ton_from",
-              "name": "ton_from",
-              "value": "={{ $json.body.entry[0].changes[0].value.messages[0].from }}",
-              "type": "string"
-            },
-            {
-              "id": "ton_wa_id",
-              "name": "ton_wa_id",
-              "value": "={{ $json.body.entry[0].changes[0].value.contacts[0].wa_id || $json.body.entry[0].changes[0].value.messages[0].from }}",
-              "type": "string"
-            },
-            {
-              "id": "ton_timestamp",
-              "name": "ton_timestamp",
-              "value": "={{ $json.body.entry[0].changes[0].value.messages[0].timestamp }}",
-              "type": "string"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "id": "set-ton",
-      "name": "Normalizar a TON",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.3,
-      "position": [450, 300]
-    },
-    {
-      "parameters": {
-        "assignments": {
-          "assignments": [
-            {
-              "id": "ton_input",
-              "name": "ton_input",
-              "value": "=text:\"{{ $json.ton_text }}\"\nfrom:\"{{ $json.ton_from }}\"\nwa_id:\"{{ $json.ton_wa_id }}\"\ntimestamp:\"{{ $json.ton_timestamp }}\"",
-              "type": "string"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "id": "format-ton",
-      "name": "Formatear TON Input",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.3,
-      "position": [650, 300]
-    },
-    {
-      "parameters": {
-        "model": "gpt-4o-mini",
-        "options": {
-          "temperature": 0.3,
-          "systemMessage": "=Eres un asistente de ventas por WhatsApp. Interpreta mensajes y responde en formato TON.\n\nIntenciones: saludo, pregunta_producto, otro\n\nResponde SOLO en formato TON:\nintent:\"...\"\nresponse:\"...\""
-        },
-        "messages": {
-          "values": [
-            {
-              "role": "user",
-              "content": "={{ $json.ton_input }}"
-            }
-          ]
-        }
-      },
-      "id": "openai-interpret",
-      "name": "OpenAI - Interpretar Intención",
-      "type": "@n8n/n8n-nodes-langchain.openAi",
-      "typeVersion": 1,
-      "position": [850, 300],
+      "position": [
+        -4300,
+        5200
+      ],
       "credentials": {
-        "openAiApi": {
-          "id": "openai-credentials",
-          "name": "OpenAI API"
+        "whatsAppTriggerApi": {
+          "id": "N0xURK0A24oorQSm",
+          "name": "WhatsApp OAuth account"
         }
       }
     },
@@ -106,220 +27,304 @@
         "assignments": {
           "assignments": [
             {
-              "id": "parsed_intent",
-              "name": "intent",
-              "value": "={{ $json.output.match(/intent:\"([^\"]+)\"/)?.[1] || 'otro' }}",
+              "name": "ton_text",
+              "value": "={{ $json.body.entry[0].changes[0].value.messages[0].text.body }}",
               "type": "string"
             },
             {
-              "id": "parsed_response",
-              "name": "response",
-              "value": "={{ $json.output.match(/response:\"([^\"]+)\"/)?.[1] || 'Lo siento, no pude entender.' }}",
+              "name": "ton_from",
+              "value": "={{ $json.body.entry[0].changes[0].value.messages[0].from }}",
+              "type": "string"
+            },
+            {
+              "name": "ton_wa_id",
+              "value": "={{ $json.body.entry[0].changes[0].value.contacts?.[0]?.wa_id || $json.body.entry[0].changes[0].value.messages[0].from }}",
+              "type": "string"
+            },
+            {
+              "name": "ton_timestamp",
+              "value": "={{ $json.body.entry[0].changes[0].value.messages[0].timestamp }}",
               "type": "string"
             }
           ]
-        },
-        "options": {}
+        }
       },
-      "id": "parse-ton-response",
-      "name": "Parsear Respuesta TON",
+      "id": "normalize-ton",
+      "name": "Normalizar a TON",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.3,
-      "position": [1050, 300]
+      "position": [
+        -4050,
+        5200
+      ]
     },
     {
       "parameters": {
-        "conditions": {
-          "string": [
+        "assignments": {
+          "assignments": [
             {
-              "value1": "={{ $json.intent }}",
-              "operation": "equals",
-              "value2": "saludo"
+              "name": "ton_input",
+              "value": "=text:\"{{$json.ton_text}}\"\nfrom:\"{{$json.ton_from}}\"\nwa_id:\"{{$json.ton_wa_id}}\"\ntimestamp:\"{{$json.ton_timestamp}}\"",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "format-ton",
+      "name": "Formatear TON Input",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [
+        -3800,
+        5200
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "value": "gpt-4o-mini",
+          "mode": "list"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "={{$json.ton_input}}",
+              "role": "user"
             },
             {
-              "value1": "={{ $json.intent }}",
-              "operation": "equals",
-              "value2": "pregunta_producto"
-            },
-            {
-              "value1": "={{ $json.intent }}",
-              "operation": "equals",
-              "value2": "otro"
+              "content": "Eres un asistente de ventas para WhatsApp. Responde SIEMPRE:\nintent:\"[tipo]\"\nresponse:\"[texto]\"\nTipos: saludo, consulta_producto, precio, otro.",
+              "role": "system"
             }
           ]
         },
-        "options": {}
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "id": "openai-intent",
+      "name": "OpenAI - Interpretar Intención",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [
+        -3550,
+        5200
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "RJbm0DOTHPeokxil",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "name": "intent",
+              "value": "={{ $json.output.match(/intent:\\\"([^\\\"]+)\\\"/)?.[1] || 'otro' }}",
+              "type": "string"
+            },
+            {
+              "name": "response",
+              "value": "={{ $json.output.match(/response:\\\"([^\\\"]+)\\\"/)?.[1] || 'Lo siento, no pude entenderte.' }}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "parse-ton",
+      "name": "Parsear Intent y Respuesta",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [
+        -3300,
+        5200
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.intent}}",
+                    "rightValue": "saludo",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.intent}}",
+                    "rightValue": "consulta_producto",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.intent}}",
+                    "rightValue": "precio",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.intent}}",
+                    "rightValue": "otro",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
       },
       "id": "switch-intent",
       "name": "Switch por Intención",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3,
-      "position": [1250, 300]
+      "position": [
+        -3050,
+        5200
+      ]
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "=https://graph.facebook.com/v21.0/{{ $env.WHATSAPP_PHONE_NUMBER_ID }}/messages",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "messaging_product",
-              "value": "whatsapp"
-            },
-            {
-              "name": "recipient_type",
-              "value": "individual"
-            },
-            {
-              "name": "to",
-              "value": "={{ $('Normalizar a TON').item.json.ton_from }}"
-            },
-            {
-              "name": "type",
-              "value": "text"
-            },
-            {
-              "name": "text[body]",
-              "value": "={{ $json.response }}"
-            }
-          ]
-        },
-        "options": {}
+        "operation": "send",
+        "phoneNumberId": "921340014388774",
+        "recipientPhoneNumber": "={{$json.ton_from}}",
+        "textBody": "={{$json.response}}",
+        "additionalFields": {
+          "previewUrl": false
+        }
       },
-      "id": "send-whatsapp",
-      "name": "Enviar Respuesta WhatsApp",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [1450, 300],
+      "id": "send-message",
+      "name": "Enviar WhatsApp",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [
+        -2800,
+        5200
+      ],
       "credentials": {
-        "httpHeaderAuth": {
-          "id": "whatsapp-auth",
-          "name": "WhatsApp Cloud API"
+        "whatsAppApi": {
+          "id": "2NabQ060HqIWoqt5",
+          "name": "WhatsApp account 2"
         }
       }
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { \"success\": true, \"message\": \"Message processed\" } }}",
-        "options": {}
+        "responseBody": "={\"ok\":true}"
       },
       "id": "webhook-response",
       "name": "Responder Webhook",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [1650, 300]
+      "position": [
+        -2550,
+        5200
+      ]
     }
   ],
   "connections": {
-    "Webhook WhatsApp": {
+    "whatsapp-trigger": {
       "main": [
         [
           {
-            "node": "Normalizar a TON",
-            "type": "main",
-            "index": 0
+            "node": "normalize-ton",
+            "type": "main"
           }
         ]
       ]
     },
-    "Normalizar a TON": {
+    "normalize-ton": {
       "main": [
         [
           {
-            "node": "Formatear TON Input",
-            "type": "main",
-            "index": 0
+            "node": "format-ton",
+            "type": "main"
           }
         ]
       ]
     },
-    "Formatear TON Input": {
+    "format-ton": {
       "main": [
         [
           {
-            "node": "OpenAI - Interpretar Intención",
-            "type": "main",
-            "index": 0
+            "node": "openai-intent",
+            "type": "main"
           }
         ]
       ]
     },
-    "OpenAI - Interpretar Intención": {
+    "openai-intent": {
       "main": [
         [
           {
-            "node": "Parsear Respuesta TON",
-            "type": "main",
-            "index": 0
+            "node": "parse-ton",
+            "type": "main"
           }
         ]
       ]
     },
-    "Parsear Respuesta TON": {
+    "parse-ton": {
       "main": [
         [
           {
-            "node": "Switch por Intención",
-            "type": "main",
-            "index": 0
+            "node": "switch-intent",
+            "type": "main"
           }
         ]
       ]
     },
-    "Switch por Intención": {
+    "switch-intent": {
       "main": [
         [
           {
-            "node": "Enviar Respuesta WhatsApp",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Enviar Respuesta WhatsApp",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Enviar Respuesta WhatsApp",
-            "type": "main",
-            "index": 0
+            "node": "send-message",
+            "type": "main"
           }
         ]
       ]
     },
-    "Enviar Respuesta WhatsApp": {
+    "send-message": {
       "main": [
         [
           {
-            "node": "Responder Webhook",
-            "type": "main",
-            "index": 0
+            "node": "webhook-response",
+            "type": "main"
           }
         ]
       ]
     }
   },
-  "pinData": {},
-  "settings": {
-    "executionOrder": "v1"
-  },
-  "staticData": null,
-  "tags": [],
-  "triggerCount": 1,
-  "updatedAt": "2024-01-01T00:00:00.000Z",
-  "versionId": "1"
+  "active": false
 }
-
